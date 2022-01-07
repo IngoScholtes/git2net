@@ -74,7 +74,7 @@ def get_line_editing_paths(sqlite_db_file, git_repo_dir, author_identifier='auth
         # Identify files that have been renamed.
         _, aliases = identify_file_renaming(git_repo_dir)
 
-    dag = pp.DAG()
+    dag = pp.DirectedAcyclicGraph()
     node_info = {}
     node_info['colors'] = {}
     node_info['time'] = {}
@@ -237,15 +237,15 @@ def get_line_editing_paths(sqlite_db_file, git_repo_dir, author_identifier='auth
         if node in file_paths_dag:
             node_info['colors'][node] = 'gray'
         else:
-            if '#FBB13C' in [edge_info['colors'][n] for n in [(x, node)
-                                                    for x in dag.predecessors[node]]]:
+            if '#FBB13C' in [edge_info['colors'][n] for n in [(x.uid, node.uid)
+                                                    for x in dag.predecessors[node.uid]]]:
                 node_info['colors'][node] = '#FBB13C' # yellow
-            elif node.startswith('deleted'):
+            elif node.uid.startswith('deleted'):
                 node_info['colors'][node] = '#A8322D' # red
-            elif 'white' not in [edge_info['colors'][n] for n in [(node, x)
-                                                        for x in dag.successors[node]]]:
+            elif 'white' not in [edge_info['colors'][n] for n in [(node.uid, x.uid)
+                                                        for x in dag.successors[node.uid]]]:
                 node_info['colors'][node] = '#2E5EAA' # blue
-            elif not dag.predecessors[node].isdisjoint(file_paths_dag):
+            elif not dag.predecessors[node.uid].isdisjoint(file_paths_dag):
                 node_info['colors'][node] = '#218380' # green
             else:
                 node_info['colors'][node] = '#73D2DE' # light blue
@@ -254,13 +254,13 @@ def get_line_editing_paths(sqlite_db_file, git_repo_dir, author_identifier='auth
         for file_path in file_paths_dag:
             dag.remove_node(file_path)
 
-    dag.topsort()
+    dag.topological_sorting()
 
-    assert dag.is_acyclic is True
+    assert dag.acyclic is True
 
-    paths = pp.path_extraction.paths_from_dag(dag)
+    #paths = pp.algorithms.path_extraction.all_paths_from_dag(dag)
 
-    return paths, dag, node_info, edge_info
+    return dag, node_info, edge_info
 
 
 def get_commit_editing_paths(sqlite_db_file, time_from=None, time_to=None, filename=None):
@@ -301,8 +301,8 @@ def get_commit_editing_paths(sqlite_db_file, time_from=None, time_to=None, filen
 
     data = data.drop(['timezone'], axis=1)
 
-    print('hello world')
-    print(data)
+    # print('hello world')
+    # print(data)
 
     if time_from == None:
         time_from = min(data.time)
@@ -316,25 +316,23 @@ def get_commit_editing_paths(sqlite_db_file, time_from=None, time_to=None, filen
     print(time_from)
     print(time_to)
 
-    node_info = {}
-    edge_info = {}
-
-    dag = pp.DAG()
+    dag = pp.DirectedAcyclicGraph()
     for idx, row in data.iterrows():
         if (row.time >= time_from) and (row.time <= time_to):
-            dag.add_edge(row.pre_commit, row.post_commit)
+            dag.add_edge(str(row.pre_commit), str(row.post_commit))
 
-    dag.topsort()
+    dag.topological_sorting()
 
-    assert dag.is_acyclic is True
+    assert dag.acyclic is True
 
-    paths = pp.path_extraction.paths_from_dag(dag)
+    paths = pp.algorithms.path_extraction.all_paths_from_dag(dag)
 
-    return paths, dag, node_info, edge_info
+    return paths, dag
 
 
+# TODO: Fix code for author_ids (int/float identifiers)
 def get_coediting_network(sqlite_db_file, author_identifier='author_id', time_from=None, time_to=None):
-    """ Returns coediting network containing links between authors who coedited at least one line of
+    """ Returns a temporal co-editing network containing links between authors who coedited at least one line of
         code within a given time window.
 
         Node and edge infos set up to be expanded with future releases.
@@ -346,7 +344,7 @@ def get_coediting_network(sqlite_db_file, author_identifier='author_id', time_fr
 
     Returns:
         t: pathpy temporal network
-        node_info: info on node charactaristics
+        node_info: info on node characteristics
         edge_info: info on edge characteristics
     """
     
@@ -402,25 +400,21 @@ def get_coediting_network(sqlite_db_file, author_identifier='author_id', time_fr
         time_to = max(data.time)
     else:
         time_to = int(calendar.timegm(time_to.timetuple()))
-
-    node_info = {}
-    edge_info = {}
     
-    t = pp.TemporalNetwork()
+    t = pp.TemporalNetwork(directed=True)
     for row in data.itertuples():
         if (row.time >= time_from) and (row.time <= time_to) and not \
            (row.post_author == row.pre_author):
             if not (pd.isnull(row.post_author) or pd.isnull(row.pre_author)):
-                t.add_edge(row.post_author,
-                           row.pre_author,
-                           row.time,
-                           directed=True)
+                v = str(row.post_author)
+                w = str(row.pre_author)
+                t.add_edge(v, w, timestamp=row.time)
 
-    return t, node_info, edge_info
+    return t
 
-
+# TODO: reimplementation based on bipartite module
 def get_coauthorship_network(sqlite_db_file, author_identifier='author_id', time_from=None, time_to=None):
-    """ Returns coauthorship network containing links between authors who coedited at least one code
+    """ Returns co-authorship network containing links between authors who co-edited at least one code
         file within a given time window.
 
         Node and edge infos set up to be expanded with future releases.
@@ -510,7 +504,7 @@ def get_bipartite_network(sqlite_db_file, author_identifier='author_id', time_fr
     """ Returns temporal bipartite network containing time-stamped file-author relationships for
         given time window.
 
-        Node and edge infos set up to be expanded with future releases.
+        Node partitions are stored in the `partition` attribute of nodes, where partition 0 refers to authors and partition 1 refers to files.
 
     Args:
         sqlite_db_file: path to sqlite database
@@ -519,8 +513,6 @@ def get_bipartite_network(sqlite_db_file, author_identifier='author_id', time_fr
 
     Returns:
         t: pathpy temporal network
-        node_info: info on node charactaristics, e.g. membership in bipartite class
-        edge_info: info on edge characteristics
     """
 
     if author_identifier == 'author_id':
@@ -571,15 +563,13 @@ def get_bipartite_network(sqlite_db_file, author_identifier='author_id', time_fr
     else:
         time_to = int(calendar.timegm(time_to.timetuple()))
 
-    node_info = {}
-    edge_info = {}
-
-    node_info['class'] = {}
-    t = pp.TemporalNetwork()
+    t = pp.TemporalNetwork(directed=True)
     for idx, row in data.iterrows():
         if (row.time >= time_from) and (row.time <= time_to):
-            t.add_edge(row['author_identifier'], row['filename'], row['time'], directed=True)
-            node_info['class'][row['author_identifier']] = 'author'
-            node_info['class'][row['filename']] = 'file'
+            v = str(row['author_identifier'])
+            w = str(row['filename'])
+            t.add_edge(v, w, timestamp=row['time'])
+            t.nodes[v]['partition'] = 0
+            t.nodes[w]['partition'] = 1
 
-    return t, node_info, edge_info
+    return t

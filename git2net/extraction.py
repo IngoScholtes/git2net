@@ -1613,7 +1613,7 @@ def mine_github(github_url, git_repo_dir, sqlite_db_file, branch=None, **kwargs)
 
     Args:
         github_url: url to the publicly accessible github project that will be mined
-                    can be priovided as full url or <OWNER>/<REPOSITORY>
+                    can be provided as full url or <OWNER>/<REPOSITORY>
         git_repo_dir: path to the git repository that is mined
                       if path ends with '/' an additional folder will be created
         sqlite_db_file: path (including database name) where the sqlite database will be created
